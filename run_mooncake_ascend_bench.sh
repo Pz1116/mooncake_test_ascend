@@ -44,7 +44,7 @@ Usage:
 
 Common options:
   --mode MODE                 p2p | store | all | all-single-node | all-multi-node
-  --world-size N              number of ranks/processes to launch
+  --local-world-size N        number of local ranks/processes to launch
   --log-dir DIR               log output directory
   --stream-logs 0|1           stream per-rank logs to terminal, default: ${STREAM_LOGS}
   --metadata-server ADDR      metadata server, default: ${METADATA_SERVER}
@@ -79,17 +79,17 @@ Extra args:
   Any trailing args after '--' are passed through to mooncake_ascend_bench.py.
 
 Examples:
-  $(basename "$0") --mode p2p --world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154
-  $(basename "$0") --mode store --world-size 8 --local-host 10.20.130.155 --master-server 127.0.0.1:50051
-  $(basename "$0") --mode all-single-node --world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154 --master-server 127.0.0.1:50051
-  $(basename "$0") --mode all-multi-node --world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154 --master-server 127.0.0.1:50051
+  $(basename "$0") --mode p2p --local-world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154
+  $(basename "$0") --mode store --local-world-size 8 --local-host 10.20.130.155 --master-server 127.0.0.1:50051
+  $(basename "$0") --mode all-single-node --local-world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154 --master-server 127.0.0.1:50051
+  $(basename "$0") --mode all-multi-node --local-world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154 --master-server 127.0.0.1:50051
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; shift 2 ;;
-    --world-size) WORLD_SIZE="$2"; shift 2 ;;
+    --local-world-size|--world-size) WORLD_SIZE="$2"; shift 2 ;;
     --local-host) LOCAL_HOST="$2"; shift 2 ;;
     --peer-host) PEER_HOST="$2"; shift 2 ;;
     --base-port) BASE_PORT="$2"; shift 2 ;;

@@ -1020,10 +1020,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", "0")))
     parser.add_argument(
+        "--local-world-size",
         "--world-size",
+        dest="world_size",
         type=int,
         default=int(os.getenv("WORLD_SIZE", "1")),
-        help="Number of ranks/processes per server",
+        help="Number of local ranks/processes on this host",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

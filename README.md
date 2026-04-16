@@ -7,7 +7,7 @@
 - `mooncake_ascend_bench.py`
   Python 测试脚本，负责执行 P2P 和 store 压测。
 - `run_mooncake_ascend_bench.sh`
-  Shell 启动脚本，负责按 `world-size` 拉起多进程并汇总结果。
+  Shell 启动脚本，负责按本机 `local-world-size` 拉起多进程并汇总结果。
 
 ## 前置条件
 
@@ -29,7 +29,7 @@
 - `RANK`
   Python 脚本默认 rank
 - `WORLD_SIZE`
-  Python 脚本默认 world size
+  Python 脚本默认本机 `local-world-size`
 - `PEER_HOST`
   Python `transfer` 子命令默认对端地址
 - `LOCAL_IP` / `LOCAL_HOST_IP`
@@ -74,7 +74,7 @@ python3 "path/to/your/mooncake test/mooncake_ascend_bench.py" --help
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode p2p \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.155 \
   --peer-host 10.20.130.154 \
   --base-port 12345 \
@@ -85,7 +85,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 
 说明：
 
-- 本机会按 `rank=0..world-size-1` 拉起多个进程
+- 本机会按 `rank=0..local-world-size-1` 拉起多个进程
 - 每个进程默认执行 `set_device(rank)`
 - 每个 `worker` 会在 `base_port + rank` 发布 metadata，主动端据此自动发现对端真实 `TransferEngine` endpoint
 - 每个本地 rank 会遍历对端 rank，并在测试结束后输出带宽矩阵汇总
@@ -100,7 +100,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 ```bash
 python3 "path/to/your/mooncake test/mooncake_ascend_bench.py" \
   --rank 0 \
-  --world-size 8 \
+  --local-world-size 8 \
   worker \
   --local-host 10.20.130.154 \
   --base-port 12345 \
@@ -114,7 +114,7 @@ python3 "path/to/your/mooncake test/mooncake_ascend_bench.py" \
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode p2p \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.155 \
   --peer-host 10.20.130.154
 ```
@@ -131,7 +131,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode store \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.155 \
   --master-server 127.0.0.1:50051 \
   --packet-sizes 1M,4M,16M \
@@ -161,7 +161,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode all-single-node \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.155 \
   --peer-host 10.20.130.154 \
   --base-port 12345 \
@@ -189,7 +189,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode all-multi-node \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.155 \
   --peer-host 10.20.130.154 \
   --base-port 12345 \
