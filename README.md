@@ -62,6 +62,46 @@ python3 "path/to/your/mooncake test/mooncake_ascend_bench.py" --help
 
 ## Shell 脚本用法
 
+### 配置文件
+
+多机场景建议通过 JSON 配置文件传参。配置文件里放共享参数和所有机器的 `hosts` 列表，脚本会在运行时根据本机 IP 匹配 `hosts` 中的一个条目。
+
+示例文件：
+
+- `examples/multi_node_config.json`
+
+示例内容：
+
+```json
+{
+  "hosts": [
+    "10.20.130.155",
+    "10.20.130.154"
+  ],
+  "local_world_size": 8,
+  "base_port": 12345,
+  "control_port": 29600,
+  "startup_wait_seconds": 15,
+  "master_server": "127.0.0.1:50051",
+  "metadata_server": "P2PHANDSHAKE",
+  "packet_sizes": "1M,4M,16M",
+  "iterations": 100,
+  "warmup": 10,
+  "batch_size": 4,
+  "pipeline_depth": 8,
+  "report_unit": "GB",
+  "stream_logs": 1
+}
+```
+
+说明：
+
+- `hosts` 用于列出所有参与机器的 host IP
+- 当前 `all-multi-node` 实现要求 `hosts` 恰好包含 2 台机器
+- 命令行参数优先级高于配置文件，可用于覆盖默认值
+- 在配置文件模式下，通常只需要在两台机器上执行同一条命令
+- 可显式传 `--local-host` 覆盖自动匹配，适合多网卡环境
+
 ### 1. P2P 模式
 
 用于测试 Ascend `device -> remote device` 的传输性能：
@@ -184,45 +224,30 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 
 该模式需要两台机器分别执行脚本，命令形式保持一致。
 
-脚本会根据 `local-host` 和 `peer-host` 自动确定执行顺序，并通过 `--control-port` 进行阶段同步。
+脚本会根据配置文件里的 `hosts` 列表和当前机器 IP 自动确定执行顺序，并通过 `--control-port` 进行阶段同步。
 
 机器 A：
 
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
+  --config "path/to/your/mooncake test/examples/multi_node_config.json" \
   --mode all-multi-node \
-  --local-world-size 8 \
   --local-host 10.20.130.155 \
-  --peer-host 10.20.130.154 \
-  --base-port 12345 \
-  --control-port 29600 \
-  --startup-wait-seconds 15 \
-  --master-server 127.0.0.1:50051 \
-  --packet-sizes 1M,4M,16M \
-  --iterations 100 \
-  --warmup 10
 ```
 
 机器 B：
 
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
+  --config "path/to/your/mooncake test/examples/multi_node_config.json" \
   --mode all-multi-node \
-  --local-world-size 8 \
   --local-host 10.20.130.154 \
-  --peer-host 10.20.130.155 \
-  --base-port 12345 \
-  --control-port 29600 \
-  --startup-wait-seconds 15 \
-  --master-server 127.0.0.1:50051 \
-  --packet-sizes 1M,4M,16M \
-  --iterations 100 \
-  --warmup 10
 ```
 
 说明：
 
-- 两边的 `peer-host` 需要互相指向对端机器
+- 两边建议使用同一份配置文件
+- `hosts` 会列出所有机器的 host IP
 - `control-port` 需要在两端之间可访问
 - 脚本会自动确定哪一侧作为全局矩阵的前半区块
 - P2P 阶段会按 `A->A`、`A->B`、`B->B`、`B->A` 的顺序执行

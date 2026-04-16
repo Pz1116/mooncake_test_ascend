@@ -16,6 +16,8 @@ MODE=""
 WORLD_SIZE="${WORLD_SIZE:-1}"
 LOCAL_HOST="${LOCAL_HOST:-127.0.0.1}"
 PEER_HOST="${PEER_HOST:-}"
+CONFIG_FILE=""
+CONFIG_HOST_COUNT=""
 BASE_PORT="${BASE_PORT:-12345}"
 CONTROL_PORT="${CONTROL_PORT:-29600}"
 STARTUP_WAIT_SECONDS="${STARTUP_WAIT_SECONDS:-15}"
@@ -36,6 +38,7 @@ EXTRA_ARGS=()
 usage() {
   cat <<EOF
 Usage:
+  $(basename "$0") --config CONFIG.json --mode all-multi-node
   $(basename "$0") --mode p2p [options]
   $(basename "$0") --mode store [options]
   $(basename "$0") --mode all [options]
@@ -43,6 +46,7 @@ Usage:
   $(basename "$0") --mode all-multi-node [options]
 
 Common options:
+  --config FILE               shared JSON config file; command-line flags override config values
   --mode MODE                 p2p | store | all | all-single-node | all-multi-node
   --local-world-size N        number of local ranks/processes to launch
   --log-dir DIR               log output directory
@@ -79,6 +83,7 @@ Extra args:
   Any trailing args after '--' are passed through to mooncake_ascend_bench.py.
 
 Examples:
+  $(basename "$0") --config path/to/config.json --mode all-multi-node
   $(basename "$0") --mode p2p --local-world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154
   $(basename "$0") --mode store --local-world-size 8 --local-host 10.20.130.155 --master-server 127.0.0.1:50051
   $(basename "$0") --mode all-single-node --local-world-size 8 --local-host 10.20.130.155 --peer-host 10.20.130.154 --master-server 127.0.0.1:50051
@@ -86,8 +91,128 @@ Examples:
 EOF
 }
 
+load_config_file() {
+  local config_file="$1"
+  local line key value
+  while IFS=$'\t' read -r key value; do
+    case "${key}" in
+      MODE) MODE="${value}" ;;
+      WORLD_SIZE) WORLD_SIZE="${value}" ;;
+      LOCAL_HOST) LOCAL_HOST="${value}" ;;
+      PEER_HOST) PEER_HOST="${value}" ;;
+      CONFIG_HOST_COUNT) CONFIG_HOST_COUNT="${value}" ;;
+      BASE_PORT) BASE_PORT="${value}" ;;
+      CONTROL_PORT) CONTROL_PORT="${value}" ;;
+      STARTUP_WAIT_SECONDS) STARTUP_WAIT_SECONDS="${value}" ;;
+      MASTER_SERVER) MASTER_SERVER="${value}" ;;
+      METADATA_SERVER) METADATA_SERVER="${value}" ;;
+      PACKET_SIZES) PACKET_SIZES="${value}" ;;
+      ITERATIONS) ITERATIONS="${value}" ;;
+      WARMUP) WARMUP="${value}" ;;
+      BATCH_SIZE) BATCH_SIZE="${value}" ;;
+      PIPELINE_DEPTH) PIPELINE_DEPTH="${value}" ;;
+      REPORT_UNIT) REPORT_UNIT="${value}" ;;
+      STREAM_LOGS) STREAM_LOGS="${value}" ;;
+      LOG_DIR) LOG_DIR="${value}" ;;
+    esac
+  done < <("${PYTHON_BIN}" - "${config_file}" <<'PY'
+import json
+import os
+import pathlib
+import socket
+import sys
+
+path = pathlib.Path(sys.argv[1])
+config = json.loads(path.read_text())
+hosts = config.get("hosts", [])
+
+def resolve(host: str) -> str:
+    try:
+        return socket.gethostbyname(host)
+    except OSError:
+        return host
+
+local_candidates = set()
+for env_name in ("LOCAL_IP", "LOCAL_HOST_IP"):
+    value = os.getenv(env_name)
+    if value:
+        local_candidates.add(value)
+        local_candidates.add(resolve(value))
+
+try:
+    local_candidates.update(socket.gethostbyname_ex(socket.gethostname())[2])
+except OSError:
+    pass
+
+detected_local = None
+if hosts:
+    matches = [host for host in hosts if host in local_candidates or resolve(host) in local_candidates]
+    if len(matches) == 1:
+        detected_local = matches[0]
+
+detected_peer = None
+if detected_local and len(hosts) == 2:
+    for host in hosts:
+        if host != detected_local:
+            detected_peer = host
+            break
+
+mapping = {
+    "MODE": config.get("mode"),
+    "WORLD_SIZE": config.get("local_world_size", config.get("world_size")),
+    "LOCAL_HOST": detected_local,
+    "PEER_HOST": detected_peer,
+    "CONFIG_HOST_COUNT": len(hosts) if hosts else None,
+    "BASE_PORT": config.get("base_port"),
+    "CONTROL_PORT": config.get("control_port"),
+    "STARTUP_WAIT_SECONDS": config.get("startup_wait_seconds"),
+    "MASTER_SERVER": config.get("master_server"),
+    "METADATA_SERVER": config.get("metadata_server"),
+    "PACKET_SIZES": config.get("packet_sizes"),
+    "ITERATIONS": config.get("iterations"),
+    "WARMUP": config.get("warmup"),
+    "BATCH_SIZE": config.get("batch_size"),
+    "PIPELINE_DEPTH": config.get("pipeline_depth"),
+    "REPORT_UNIT": config.get("report_unit"),
+    "STREAM_LOGS": config.get("stream_logs"),
+    "LOG_DIR": config.get("log_dir"),
+}
+for key, value in mapping.items():
+    if value is None or value == "":
+        continue
+    print(f"{key}\t{value}")
+PY
+)
+}
+
+CLI_ARGS=("$@")
+for ((i = 0; i < ${#CLI_ARGS[@]}; i++)); do
+  case "${CLI_ARGS[$i]}" in
+    --config)
+      if (( i + 1 >= ${#CLI_ARGS[@]} )); then
+        echo "error: --config requires a file path" >&2
+        exit 1
+      fi
+      CONFIG_FILE="${CLI_ARGS[$((i + 1))]}"
+      ;;
+    --config=*)
+      CONFIG_FILE="${CLI_ARGS[$i]#--config=}"
+      ;;
+  esac
+done
+
+if [[ -n "${CONFIG_FILE}" ]]; then
+  if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "error: config file not found: ${CONFIG_FILE}" >&2
+    exit 1
+  fi
+  load_config_file "${CONFIG_FILE}"
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --config) CONFIG_FILE="$2"; shift 2 ;;
+    --config=*) CONFIG_FILE="${1#--config=}"; shift ;;
     --mode) MODE="$2"; shift 2 ;;
     --local-world-size|--world-size) WORLD_SIZE="$2"; shift 2 ;;
     --local-host) LOCAL_HOST="$2"; shift 2 ;;
@@ -128,6 +253,11 @@ fi
 
 if [[ ( "${MODE}" == "p2p" || "${MODE}" == "all" || "${MODE}" == "all-single-node" || "${MODE}" == "all-multi-node" ) && -z "${PEER_HOST}" ]]; then
   echo "error: --peer-host is required for ${MODE} mode" >&2
+  exit 1
+fi
+
+if [[ "${MODE}" == "all-multi-node" && -n "${CONFIG_HOST_COUNT}" && "${CONFIG_HOST_COUNT}" != "2" ]]; then
+  echo "error: current all-multi-node implementation requires exactly 2 hosts in the config file" >&2
   exit 1
 fi
 

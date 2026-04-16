@@ -1,0 +1,19 @@
+{
+  "hosts": [
+    "10.20.130.155",
+    "10.20.130.154"
+  ],
+  "local_world_size": 8,
+  "base_port": 12345,
+  "control_port": 29600,
+  "startup_wait_seconds": 15,
+  "master_server": "127.0.0.1:50051",
+  "metadata_server": "P2PHANDSHAKE",
+  "packet_sizes": "1M,4M,16M",
+  "iterations": 100,
+  "warmup": 10,
+  "batch_size": 4,
+  "pipeline_depth": 8,
+  "report_unit": "GB",
+  "stream_logs": 1
+}
