@@ -243,6 +243,93 @@ if has_fail:
 PY
 }
 
+summarize_store_logs() {
+  local log_dir="$1"
+  local world_size="$2"
+
+  "${PYTHON_BIN}" - "$log_dir" "$world_size" <<'PY'
+import csv
+import pathlib
+import re
+import sys
+
+log_dir = pathlib.Path(sys.argv[1])
+world_size = int(sys.argv[2])
+
+rank_pattern = re.compile(r"^store_rank=(\d+)$")
+ok_pattern = re.compile(
+    r"^(pool_(?:put_from|get_into))\s+size=\s*(\d+)KB.*throughput=([0-9.]+\s+\w+/s)$"
+)
+fail_pattern = re.compile(
+    r"^(pool_(?:put_from|get_into))\s+size=\s*(\d+)KB.*status=([A-Z_]+).*$"
+)
+
+tables = {}
+has_fail = False
+paths = sorted(log_dir.glob("store_rank*.log"))
+for path in paths:
+    try:
+        text = path.read_text()
+    except OSError:
+        continue
+    rank = None
+    for line in text.splitlines():
+        line = line.strip()
+        match = rank_pattern.match(line)
+        if match:
+            rank = int(match.group(1))
+            continue
+        match = ok_pattern.match(line)
+        if match:
+            op, size, cell = match.groups()
+        else:
+            match = fail_pattern.match(line)
+            if not match:
+                continue
+            op, size, cell = match.groups()
+        if rank is None:
+            continue
+        key = (int(size), op)
+        table = tables.setdefault(key, ["-" for _ in range(world_size)])
+        table[rank] = cell
+        if cell.endswith("FAIL"):
+            has_fail = True
+
+if not tables:
+    sys.exit(0)
+
+def print_table(title, values):
+    header_rank = "rank"
+    header_value = "result"
+    width_rank = max(len(header_rank), max(len(str(i)) for i in range(len(values))))
+    width_value = max(len(header_value), max(len(v) for v in values))
+    print(title)
+    print(f"{header_rank.rjust(width_rank)}  {header_value.rjust(width_value)}")
+    for rank, value in enumerate(values):
+        print(f"{str(rank).rjust(width_rank)}  {value.rjust(width_value)}")
+
+def write_csv(path, values):
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["rank", "result"])
+        for rank, value in enumerate(values):
+            writer.writerow([rank, value])
+
+for key in sorted(tables):
+    size_kb, op = key
+    values = tables[key]
+    print()
+    print_table(f"[summary] {op} size={size_kb}KB", values)
+    csv_name = f"{op}_size_{size_kb}KB.csv"
+    csv_path = log_dir / csv_name
+    write_csv(csv_path, values)
+    print(f"[summary] csv={csv_path}")
+
+if has_fail:
+    sys.exit(2)
+PY
+}
+
 start_log_stream() {
   local label="$1"
   local log_file="$2"
@@ -617,6 +704,16 @@ run_store_round_robin() {
 
   if [[ "${rc}" -ne 0 ]]; then
     echo "[error] at least one store rank failed. logs are under ${LOG_DIR}" >&2
+    exit "${rc}"
+  fi
+
+  if summarize_store_logs "${LOG_DIR}" "${WORLD_SIZE}"; then
+    :
+  else
+    rc=$?
+  fi
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "[error] store summary contains failed transfers. logs are under ${LOG_DIR}" >&2
     exit "${rc}"
   fi
 

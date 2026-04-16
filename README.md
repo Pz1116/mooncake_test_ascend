@@ -145,6 +145,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 - shell 脚本会将 `--local-host` 原样透传给 Python `store` 子命令
 - Ascend 场景建议使用实际可达 IP，不建议使用 `localhost`
 - shell 的 `store` 调度默认按 `rank` 轮巡执行，每次只运行一个 rank
+- `store` 结果会在终端打印按 `packet_size` 和操作类型拆分的 rank 汇总表，并在 `--log-dir` 下写出对应 CSV
 - 如环境要求使用特定节点名，可显式传入 `--local-host your-hostname`
 - `store` 模式默认跳过显式 `unregister_buffer/close`，用于规避 Ascend 环境下进程退出阶段的 native teardown crash
 - `p2p` 模式默认在结果输出后快速退出，用于规避 Ascend 环境下进程退出阶段的 native teardown crash
