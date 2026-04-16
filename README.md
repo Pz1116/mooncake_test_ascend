@@ -175,10 +175,12 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 
 用于双机顺序联动测试，覆盖：
 
-1. 一侧到另一侧的 P2P
-2. 反向 P2P
-3. 一侧 store
-4. 另一侧 store
+1. 主机 A 机内 P2P
+2. 主机 A 到主机 B 的 P2P
+3. 主机 B 机内 P2P
+4. 主机 B 到主机 A 的 P2P
+5. 主机 A store
+6. 主机 B store
 
 该模式需要两台机器分别执行脚本，命令形式保持一致。
 
@@ -206,7 +208,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 ```bash
 bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
   --mode all-multi-node \
-  --world-size 8 \
+  --local-world-size 8 \
   --local-host 10.20.130.154 \
   --peer-host 10.20.130.155 \
   --base-port 12345 \
@@ -222,7 +224,9 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 
 - 两边的 `peer-host` 需要互相指向对端机器
 - `control-port` 需要在两端之间可访问
-- 脚本会自动确定第一轮 P2P 的执行方向
+- 脚本会自动确定哪一侧作为全局矩阵的前半区块
+- P2P 阶段会按 `A->A`、`A->B`、`B->B`、`B->A` 的顺序执行
+- 主机 A 侧会在 `all_multi_node_p2p` 目录下汇总输出完整 `16x16` 矩阵和对应 CSV
 - 当前使用方式面向双机场景
 
 ## 日志和结果
@@ -231,6 +235,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 - shell 脚本默认会实时打印各 rank 的日志；如需仅写文件，可传 `--stream-logs 0`
 - P2P 模式结束后会自动输出 `src_rank x dst_rank` 的矩阵汇总
 - P2P 模式结束后会在日志目录额外生成 CSV 文件，例如 `transfer_sync_write_size_1024KB.csv`
+- `all-multi-node` 模式的主机 A 侧会额外输出完整多机矩阵，例如 `global_transfer_sync_write_size_1024KB.csv`
 - 单条结果中的 `size` 以 `KB` 显示
 
 ## Python 脚本直接用法

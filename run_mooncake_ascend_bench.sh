@@ -531,6 +531,57 @@ if data != expected:
 PY
 }
 
+control_send_file() {
+  local label="$1"
+  local file_path="$2"
+  "${PYTHON_BIN}" - "${PEER_HOST}" "${CONTROL_PORT}" "${label}" "${file_path}" <<'PY'
+import pathlib
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+label = sys.argv[3].encode("utf-8")
+payload = pathlib.Path(sys.argv[4]).read_bytes()
+with socket.create_connection((host, port), timeout=300) as sock:
+    sock.sendall(label + b"\n" + payload)
+PY
+}
+
+control_wait_file() {
+  local expected="$1"
+  local output_path="$2"
+  echo "[sync] waiting for file ${expected} on port ${CONTROL_PORT}"
+  "${PYTHON_BIN}" - "${CONTROL_PORT}" "${expected}" "${output_path}" <<'PY'
+import pathlib
+import socket
+import sys
+
+port = int(sys.argv[1])
+expected = sys.argv[2].encode("utf-8")
+output_path = pathlib.Path(sys.argv[3])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("", port))
+    server.listen(1)
+    conn, _ = server.accept()
+    with conn:
+        chunks = []
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+data = b"".join(chunks)
+label, sep, payload = data.partition(b"\n")
+if sep == b"":
+    raise SystemExit("invalid file payload without header separator")
+if label != expected:
+    raise SystemExit(f"unexpected file label: {label!r}, expected {expected!r}")
+output_path.write_bytes(payload)
+PY
+}
+
 infer_node_role() {
   "${PYTHON_BIN}" - "${LOCAL_HOST}" "${PEER_HOST}" <<'PY'
 import ipaddress
@@ -570,6 +621,157 @@ def normalize(host: str) -> str:
         return host
 
 print("1" if normalize(sys.argv[1]) == normalize(sys.argv[2]) else "0")
+PY
+}
+
+run_nested_p2p() {
+  local phase_log_dir="$1"
+  local phase_local_host="$2"
+  local phase_peer_host="$3"
+
+  mkdir -p "${phase_log_dir}"
+  local -a cmd=(
+    bash "${BASH_SOURCE[0]}"
+    --mode p2p
+    --local-world-size "${WORLD_SIZE}"
+    --local-host "${phase_local_host}"
+    --peer-host "${phase_peer_host}"
+    --base-port "${BASE_PORT}"
+    --metadata-server "${METADATA_SERVER}"
+    --packet-sizes "${PACKET_SIZES}"
+    --iterations "${ITERATIONS}"
+    --warmup "${WARMUP}"
+    --batch-size "${BATCH_SIZE}"
+    --pipeline-depth "${PIPELINE_DEPTH}"
+    --report-unit "${REPORT_UNIT}"
+    --startup-wait-seconds "${STARTUP_WAIT_SECONDS}"
+    --stream-logs "${STREAM_LOGS}"
+    --log-dir "${phase_log_dir}"
+  )
+  if [[ -n "${PEER_RANK}" ]]; then
+    cmd+=(--peer-rank "${PEER_RANK}")
+  fi
+  if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    cmd+=("${EXTRA_ARGS[@]}")
+  fi
+  "${cmd[@]}"
+}
+
+build_transfer_bundle_json() {
+  local output_json="$1"
+  shift
+  "${PYTHON_BIN}" - "${output_json}" "$@" <<'PY'
+import csv
+import json
+import pathlib
+import re
+import sys
+
+output = pathlib.Path(sys.argv[1])
+args = sys.argv[2:]
+pattern = re.compile(r"^(transfer_(?:sync|async)_write)_size_(\d+)KB\.csv$")
+bundle = {}
+
+for idx in range(0, len(args), 2):
+    phase = args[idx]
+    phase_dir = pathlib.Path(args[idx + 1])
+    phase_data = {}
+    if phase_dir.exists():
+        for path in sorted(phase_dir.glob("transfer_*_size_*KB.csv")):
+            match = pattern.match(path.name)
+            if not match:
+                continue
+            op, size = match.groups()
+            matrix = []
+            with path.open(newline="") as f:
+                reader = csv.reader(f)
+                next(reader, None)
+                for row in reader:
+                    matrix.append(row[1:])
+            phase_data.setdefault(op, {})[size] = matrix
+    bundle[phase] = phase_data
+
+output.write_text(json.dumps(bundle, sort_keys=True))
+PY
+}
+
+merge_transfer_bundle_json() {
+  local local_bundle="$1"
+  local remote_bundle="$2"
+  local local_world_size="$3"
+  local output_dir="$4"
+  "${PYTHON_BIN}" - "${local_bundle}" "${remote_bundle}" "${local_world_size}" "${output_dir}" <<'PY'
+import csv
+import json
+import pathlib
+import sys
+
+local_bundle = json.loads(pathlib.Path(sys.argv[1]).read_text())
+remote_bundle = json.loads(pathlib.Path(sys.argv[2]).read_text())
+local_world_size = int(sys.argv[3])
+output_dir = pathlib.Path(sys.argv[4])
+output_dir.mkdir(parents=True, exist_ok=True)
+global_world_size = local_world_size * 2
+
+phase_to_offset = {
+    "aa": (0, 0),
+    "ab": (0, local_world_size),
+    "ba": (local_world_size, 0),
+    "bb": (local_world_size, local_world_size),
+}
+
+tables = {}
+for bundle in (local_bundle, remote_bundle):
+    for phase, phase_data in bundle.items():
+        if phase not in phase_to_offset:
+            continue
+        src_offset, dst_offset = phase_to_offset[phase]
+        for op, sizes in phase_data.items():
+            for size, matrix in sizes.items():
+                table = tables.setdefault(
+                    (op, int(size)),
+                    [["-" for _ in range(global_world_size)] for _ in range(global_world_size)],
+                )
+                for src_idx, row in enumerate(matrix):
+                    for dst_idx, cell in enumerate(row):
+                        table[src_offset + src_idx][dst_offset + dst_idx] = cell
+
+def print_table(title, table):
+    print(title)
+    header = ["src\\dst"] + [str(i) for i in range(len(table[0]))]
+    widths = [max(len(header[i]), 10) for i in range(len(header))]
+    for row_idx, row in enumerate(table):
+        widths[0] = max(widths[0], len(str(row_idx)))
+        for col_idx, cell in enumerate(row, start=1):
+            widths[col_idx] = max(widths[col_idx], len(cell))
+    print("  ".join(header[i].rjust(widths[i]) for i in range(len(header))))
+    for row_idx, row in enumerate(table):
+        values = [str(row_idx)] + row
+        print("  ".join(values[i].rjust(widths[i]) for i in range(len(values))))
+
+def write_csv(path, table):
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["src\\dst", *range(len(table[0]))])
+        for row_idx, row in enumerate(table):
+            writer.writerow([row_idx, *row])
+
+has_fail = False
+for key in sorted(tables):
+    op, size_kb = key
+    table = tables[key]
+    print()
+    print_table(f"[global-summary] {op} size={size_kb}KB", table)
+    csv_path = output_dir / f"global_{op}_size_{size_kb}KB.csv"
+    write_csv(csv_path, table)
+    print(f"[global-summary] csv={csv_path}")
+    for row in table:
+        for cell in row:
+            if cell.endswith("FAIL"):
+                has_fail = True
+
+if has_fail:
+    sys.exit(2)
 PY
 }
 
@@ -796,19 +998,47 @@ run_all_multi_node() {
   node_role="$(infer_node_role)"
   echo "[info] auto-selected multi-node role=${node_role} from local-host=${LOCAL_HOST} peer-host=${PEER_HOST}"
 
+  local p2p_root="${LOG_DIR}/all_multi_node_p2p"
+  local aa_dir="${p2p_root}/aa"
+  local ab_dir="${p2p_root}/ab"
+  local ba_dir="${p2p_root}/ba"
+  local bb_dir="${p2p_root}/bb"
+  local local_bundle="${p2p_root}/local_bundle.json"
+  local remote_bundle="${p2p_root}/remote_bundle.json"
+  mkdir -p "${p2p_root}"
+
   if [[ "${node_role}" == "primary" ]]; then
-    control_wait "secondary_workers_ready"
-    echo "[stage] running primary -> secondary p2p benchmark"
-    run_mode "worker"
-    control_send "primary_p2p_done"
+    echo "[stage] running primary intra-node p2p benchmark"
+    run_nested_p2p "${aa_dir}" "${LOCAL_HOST}" "${LOCAL_HOST}"
+    control_send "phase_aa_done"
 
     echo
-    echo "[stage] starting passive workers for reverse p2p"
+    echo "[stage] waiting for secondary passive workers for primary -> secondary p2p"
+    control_wait "ab_workers_ready"
+    echo "[stage] running primary -> secondary p2p benchmark"
+    run_nested_p2p "${ab_dir}" "${LOCAL_HOST}" "${PEER_HOST}"
+    control_send "phase_ab_done"
+
+    echo
+    control_wait "phase_bb_done"
+    echo "[stage] starting passive workers for secondary -> primary p2p"
     start_passive_workers
     sleep "${STARTUP_WAIT_SECONDS}"
-    control_send "primary_workers_ready"
-    control_wait "secondary_p2p_done"
+    control_send "ba_workers_ready"
+    control_wait "phase_ba_done"
     stop_passive_workers
+
+    echo
+    build_transfer_bundle_json "${local_bundle}" aa "${aa_dir}" ab "${ab_dir}"
+    control_wait_file "secondary_p2p_bundle" "${remote_bundle}"
+    echo "[stage] merging full multi-node p2p matrix"
+    if merge_transfer_bundle_json "${local_bundle}" "${remote_bundle}" "${WORLD_SIZE}" "${p2p_root}"; then
+      :
+    else
+      local rc=$?
+      echo "[error] merged multi-node p2p summary contains failed transfers. logs are under ${p2p_root}" >&2
+      exit "${rc}"
+    fi
 
     echo
     echo "[stage] running primary store benchmark"
@@ -816,18 +1046,28 @@ run_all_multi_node() {
     control_send "primary_store_done"
     control_wait "secondary_store_done"
   else
+    control_wait "phase_aa_done"
     echo "[stage] starting passive workers for primary -> secondary p2p"
     start_passive_workers
     sleep "${STARTUP_WAIT_SECONDS}"
-    control_send "secondary_workers_ready"
-    control_wait "primary_p2p_done"
+    control_send "ab_workers_ready"
+    control_wait "phase_ab_done"
     stop_passive_workers
 
-    control_wait "primary_workers_ready"
+    echo
+    echo "[stage] running secondary intra-node p2p benchmark"
+    run_nested_p2p "${bb_dir}" "${LOCAL_HOST}" "${LOCAL_HOST}"
+    control_send "phase_bb_done"
+
+    control_wait "ba_workers_ready"
     echo
     echo "[stage] running secondary -> primary p2p benchmark"
-    run_mode "worker"
-    control_send "secondary_p2p_done"
+    run_nested_p2p "${ba_dir}" "${LOCAL_HOST}" "${PEER_HOST}"
+    control_send "phase_ba_done"
+
+    echo
+    build_transfer_bundle_json "${local_bundle}" bb "${bb_dir}" ba "${ba_dir}"
+    control_send_file "secondary_p2p_bundle" "${local_bundle}"
 
     control_wait "primary_store_done"
     echo
