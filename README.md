@@ -102,6 +102,18 @@ python3 "path/to/your/mooncake test/mooncake_ascend_bench.py" --help
 - 在配置文件模式下，通常只需要在两台机器上执行同一条命令
 - 可显式传 `--local-host` 覆盖自动匹配，适合多网卡环境
 
+当前限制：
+
+- `all-multi-node` 目前只支持 2 台机器
+- 当前全局 P2P 汇总逻辑只覆盖四块矩阵：`A->A`、`A->B`、`B->B`、`B->A`
+- 当前阶段同步采用双机点对点控制消息，不适用于 3 机及以上场景
+
+TODO：
+
+- 扩展 `all-multi-node` 到 3 机、4 机及更多机器
+- 引入面向多机的统一阶段调度和 barrier
+- 支持按 `N * local_world_size` 输出完整全局矩阵和 CSV
+
 ### 1. P2P 模式
 
 用于测试 Ascend `device -> remote device` 的传输性能：
@@ -252,7 +264,7 @@ bash "path/to/your/mooncake test/run_mooncake_ascend_bench.sh" \
 - 脚本会自动确定哪一侧作为全局矩阵的前半区块
 - P2P 阶段会按 `A->A`、`A->B`、`B->B`、`B->A` 的顺序执行
 - 主机 A 侧会在 `all_multi_node_p2p` 目录下汇总输出完整 `16x16` 矩阵和对应 CSV
-- 当前使用方式面向双机场景
+- 当前使用方式仅支持双机场景
 
 ## 日志和结果
 
